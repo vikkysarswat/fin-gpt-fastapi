@@ -1,34 +1,34 @@
-import os, time, base64, hashlib, json, secrets
-from datetime import datetime, timedelta
-from typing import Optional, List, Dict, Any
 
-from fastapi import FastAPI, Request, Depends, HTTPException, status, Form, Response, Header
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, PlainTextResponse
+import os, base64, hashlib, secrets
+from datetime import datetime, timedelta
+from typing import Optional, Dict
+
+from fastapi import FastAPI, Request, Depends, HTTPException, Form, Header, Security
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from pydantic import BaseModel
 
-from sqlalchemy import (
-    create_engine, Column, Integer, String, Boolean, DateTime, ForeignKey, Text, Float
-)
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, ForeignKey, Float
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session
 
 from passlib.hash import bcrypt
 import jwt
 
-# ---------------- Config -----------------
-SECRET_KEY = os.getenv("SECRET_KEY", "4Mu_gDal4kzQpeQs10zoTbKxVlRIS8eolgs9HwAhRPM")
-ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "YCcp0krQqj8BeQSjrIk-9tDDFiQ9QT8z")
+SECRET_KEY = os.getenv("SECRET_KEY", "s9SOk5AlF7_D8xfTNaBeOPKKu3OYo4dkaQXfEHyKIeU")
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "z2hSQovrFXqCTd53hiuQdzE1f836DaP6")
 ACCESS_TOKEN_EXPIRES_IN = int(os.getenv("ACCESS_TOKEN_EXPIRES_IN", "3600"))
-REFRESH_TOKEN_EXPIRES_IN = int(os.getenv("REFRESH_TOKEN_EXPIRES_IN", "1209600"))  # 14 days
+REFRESH_TOKEN_EXPIRES_IN = int(os.getenv("REFRESH_TOKEN_EXPIRES_IN", "1209600"))
 OAUTH_CLIENT_ID = os.getenv("OAUTH_CLIENT_ID", "customgpt-demo")
-OAUTH_CLIENT_SECRET = os.getenv("OAUTH_CLIENT_SECRET", "WFJbloooUmoxbfJpJvG7NHwWISsnI2jV")
+OAUTH_CLIENT_SECRET = os.getenv("OAUTH_CLIENT_SECRET", "0IwoGJFxShdyu3DWsSY0a-TuaWovBBO0")
 ALLOW_REDIRECT_PREFIX = os.getenv("ALLOW_REDIRECT_PREFIX", "https://chat.openai.com/")
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://fin-gpt-fastapi.onrender.com")
 
 DB_URL = os.getenv("DATABASE_URL", "sqlite:///./data.db")
 
-# --------------- App & DB ----------------
-app = FastAPI(title="FIN-GPT FastAPI OAuth Demo", version="1.0.0")
+app = FastAPI(title="FIN-GPT FastAPI OAuth Demo", version="1.0.1")
 
 app.add_middleware(
     CORSMiddleware,
@@ -37,7 +37,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY, max_age=60*30, same_site="lax")
 
 templates = Jinja2Templates(directory="app/templates")
@@ -46,16 +45,20 @@ engine = create_engine(DB_URL, connect_args={"check_same_thread": False} if DB_U
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# --------------- Models ------------------
+http_bearer = HTTPBearer(auto_error=True)
+
+class AdminAddRedirectRequest(BaseModel):
+    client_id: str
+    redirect_uri: str
+
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True)
     email = Column(String, unique=True, nullable=False)
     password_hash = Column(String, nullable=False)
     phone = Column(String, nullable=True)
-    client_code = Column(String, nullable=True)  # brokerage client id
+    client_code = Column(String, nullable=True)
     name = Column(String, nullable=True)
-
     trades = relationship("Trade", back_populates="user")
     ledger = relationship("LedgerEntry", back_populates="user")
     holdings = relationship("Holding", back_populates="user")
@@ -66,9 +69,8 @@ class OAuthClient(Base):
     __tablename__ = "oauth_clients"
     id = Column(Integer, primary_key=True)
     client_id = Column(String, unique=True, nullable=False)
-    client_secret = Column(String, nullable=True)  # optional for public clients; used here for demo
+    client_secret = Column(String, nullable=True)
     name = Column(String, default="CustomGPT Client")
-    # For simplicity we store a single allowed prefix; any redirect_uri must start with it
     allowed_redirect_prefix = Column(String, default=ALLOW_REDIRECT_PREFIX)
     scope = Column(String, default="read")
 
@@ -103,7 +105,7 @@ class Trade(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"))
     symbol = Column(String, nullable=False)
-    side = Column(String, nullable=False)  # BUY/SELL
+    side = Column(String, nullable=False)
     qty = Column(Integer, nullable=False)
     price = Column(Float, nullable=False)
     timestamp = Column(DateTime, default=datetime.utcnow)
@@ -113,7 +115,7 @@ class LedgerEntry(Base):
     __tablename__ = "ledger"
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"))
-    entry_type = Column(String)  # CREDIT/DEBIT
+    entry_type = Column(String)
     amount = Column(Float)
     description = Column(String)
     timestamp = Column(DateTime, default=datetime.utcnow)
@@ -123,7 +125,7 @@ class PnL(Base):
     __tablename__ = "pnl"
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"))
-    date = Column(String)  # YYYY-MM-DD
+    date = Column(String)
     realized = Column(Float, default=0.0)
     unrealized = Column(Float, default=0.0)
     user = relationship("User", back_populates="pnl")
@@ -145,7 +147,6 @@ class Fund(Base):
     margin_used = Column(Float, default=0.0)
     user = relationship("User", back_populates="funds")
 
-# --------------- DB utils ----------------
 def get_db():
     db = SessionLocal()
     try:
@@ -156,88 +157,48 @@ def get_db():
 def init_db():
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
-    # seed users if none
     if db.query(User).count() == 0:
         def mkuser(email, name, phone, code):
-            u = User(
-                email=email, name=name, phone=phone,
-                client_code=code, password_hash=bcrypt.hash("test1234")
-            )
-            db.add(u)
-            db.flush()
-            # some dummy data
-            db.add_all([
-                Trade(user_id=u.id, symbol="NIFTY", side="BUY", qty=50, price=24500.0),
-                Trade(user_id=u.id, symbol="RELIANCE", side="SELL", qty=10, price=2980.5),
-            ])
-            db.add_all([
-                LedgerEntry(user_id=u.id, entry_type="CREDIT", amount=50000, description="Initial deposit"),
-                LedgerEntry(user_id=u.id, entry_type="DEBIT", amount=1500, description="Brokerage & charges"),
-            ])
-            db.add_all([
-                PnL(user_id=u.id, date="2025-08-12", realized=1200.5, unrealized=300.0),
-                PnL(user_id=u.id, date="2025-08-13", realized=-350.0, unrealized=100.0),
-            ])
-            db.add_all([
-                Holding(user_id=u.id, symbol="TCS", qty=5, avg_price=3775.0),
-                Holding(user_id=u.id, symbol="HDFCBANK", qty=12, avg_price=1540.0),
-            ])
+            u = User(email=email, name=name, phone=phone, client_code=code, password_hash=bcrypt.hash("test1234"))
+            db.add(u); db.flush()
+            db.add_all([Trade(user_id=u.id, symbol="NIFTY", side="BUY", qty=50, price=24500.0),
+                        Trade(user_id=u.id, symbol="RELIANCE", side="SELL", qty=10, price=2980.5)])
+            db.add_all([LedgerEntry(user_id=u.id, entry_type="CREDIT", amount=50000, description="Initial deposit"),
+                        LedgerEntry(user_id=u.id, entry_type="DEBIT", amount=1500, description="Brokerage & charges")])
+            db.add_all([PnL(user_id=u.id, date="2025-08-12", realized=1200.5, unrealized=300.0),
+                        PnL(user_id=u.id, date="2025-08-13", realized=-350.0, unrealized=100.0)])
+            db.add_all([Holding(user_id=u.id, symbol="TCS", qty=5, avg_price=3775.0),
+                        Holding(user_id=u.id, symbol="HDFCBANK", qty=12, avg_price=1540.0)])
             db.add(Fund(user_id=u.id, available=25000.0, margin_used=5000.0))
         mkuser("arun@example.com", "Arun", "+91-90000", "ARUN01")
         mkuser("riya@example.com", "Riya", "+91-90001", "RIYA01")
         mkuser("vikky@example.com", "Vikky", "+91-90002", "VIKKY01")
         db.commit()
-
-    # seed oauth client if missing
     if db.query(OAuthClient).filter_by(client_id=OAUTH_CLIENT_ID).first() is None:
-        db.add(OAuthClient(
-            client_id=OAUTH_CLIENT_ID,
-            client_secret=OAUTH_CLIENT_SECRET,
-            name="CustomGPT Client",
-            allowed_redirect_prefix=ALLOW_REDIRECT_PREFIX,
-            scope="read"
-        ))
+        db.add(OAuthClient(client_id=OAUTH_CLIENT_ID, client_secret=OAUTH_CLIENT_SECRET,
+                           name="CustomGPT Client", allowed_redirect_prefix=ALLOW_REDIRECT_PREFIX, scope="read"))
         db.commit()
     db.close()
 
 init_db()
 
-# --------------- Helpers -----------------
-def create_access_token(user: User, client_id: str, scope: str = "read") -> (str, datetime):
+def create_access_token(user: User, client_id: str, scope: str="read"):
     now = datetime.utcnow()
     exp = now + timedelta(seconds=ACCESS_TOKEN_EXPIRES_IN)
-    payload = {
-        "sub": str(user.id),
-        "email": user.email,
-        "name": user.name,
-        "scope": scope,
-        "client_id": client_id,
-        "iat": int(now.timestamp()),
-        "exp": int(exp.timestamp()),
-        "iss": "fin-gpt-fastapi",
-    }
+    payload = {"sub": str(user.id), "email": user.email, "name": user.name, "scope": scope,
+                "client_id": client_id, "iat": int(now.timestamp()), "exp": int(exp.timestamp()), "iss": "fin-gpt-fastapi"}
     token = jwt.encode(payload, SECRET_KEY, algorithm="HS256")
     return token, exp
 
-def create_refresh_token(user: User, client_id: str, scope: str = "read") -> (str, datetime):
+def create_refresh_token(user: User, client_id: str, scope: str="read"):
     now = datetime.utcnow()
     exp = now + timedelta(seconds=REFRESH_TOKEN_EXPIRES_IN)
-    payload = {
-        "sub": str(user.id),
-        "scope": scope,
-        "client_id": client_id,
-        "type": "refresh",
-        "iat": int(now.timestamp()),
-        "exp": int(exp.timestamp()),
-        "iss": "fin-gpt-fastapi",
-    }
+    payload = {"sub": str(user.id), "scope": scope, "client_id": client_id, "type": "refresh",
+                "iat": int(now.timestamp()), "exp": int(exp.timestamp()), "iss": "fin-gpt-fastapi"}
     token = jwt.encode(payload, SECRET_KEY, algorithm="HS256")
     return token, exp
 
-def verify_bearer(db: Session, authorization: Optional[str]) -> User:
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(status_code=401, detail="Missing bearer token")
-    token = authorization.split(" ", 1)[1]
+def verify_bearer_token(db: Session, token: str) -> User:
     try:
         data = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
     except jwt.ExpiredSignatureError:
@@ -248,35 +209,23 @@ def verify_bearer(db: Session, authorization: Optional[str]) -> User:
     user = db.get(User, user_id)
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
-    # check not revoked
     tok = db.query(OAuthToken).filter_by(access_token=token, revoked=False).first()
     if not tok or tok.access_expires_at < datetime.utcnow():
         raise HTTPException(status_code=401, detail="Token invalidated")
     return user
 
-def require_admin(x_admin_token: Optional[str] = Header(None)):
-    if x_admin_token != ADMIN_TOKEN:
-        raise HTTPException(status_code=403, detail="Admin token required")
+def get_current_user(credentials: HTTPAuthorizationCredentials = Security(http_bearer), db: Session = Depends(get_db)) -> User:
+    token = credentials.credentials
+    return verify_bearer_token(db, token)
 
-# --------------- Root & Health ---------------
 @app.get("/", response_class=HTMLResponse)
 def home():
-    return """
-    <html><body>
-    <h3>FIN-GPT FastAPI OAuth Demo</h3>
-    <p>Use this app as an OAuth provider for Custom GPT Actions and as a data API.</p>
-    <ul>
-      <li><a href="/docs">Interactive API docs</a></li>
-      <li><a href="/openapi.json">OpenAPI schema</a></li>
-    </ul>
-    </body></html>
-    """
+    return "<html><body><h3>FIN-GPT FastAPI OAuth Demo</h3><ul><li><a href='/docs'>API docs</a></li><li><a href='/openapi.json'>OpenAPI</a></li></ul></body></html>"
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "time": datetime.utcnow().isoformat()}
+    return {"status":"ok","time":datetime.utcnow().isoformat()}
 
-# --------------- Auth: Sign-in ---------------
 @app.get("/login", response_class=HTMLResponse)
 def login_form(request: Request, next: str = "/"):
     return templates.TemplateResponse("login.html", {"request": request, "next": next, "error": None})
@@ -290,12 +239,10 @@ def login_submit(request: Request, email: str = Form(...), password: str = Form(
     request.session["user_id"] = user.id
     return RedirectResponse(next, status_code=302)
 
-# --------------- OAuth: Authorize ---------------
 def _ensure_client_and_redirect(db: Session, client_id: str, redirect_uri: str) -> OAuthClient:
     client = db.query(OAuthClient).filter_by(client_id=client_id).first()
     if not client:
         raise HTTPException(400, "Unknown client_id")
-    # Basic prefix match to allow GPT's changing callback path under chat.openai.com
     if not redirect_uri.startswith(client.allowed_redirect_prefix):
         raise HTTPException(400, "redirect_uri not allowed")
     return client
@@ -321,11 +268,9 @@ def oauth_authorize_get(
 
     user_id = request.session.get("user_id")
     if not user_id:
-        # go to login then back here
         next_url = str(request.url)
         return RedirectResponse(f"/login?next={next_url}", status_code=302)
 
-    # Show consent
     txid = secrets.token_urlsafe(16)
     request.session["tx"] = {
         "txid": txid,
@@ -346,38 +291,24 @@ def oauth_authorize_post(request: Request, decision: str = Form(...), transactio
         raise HTTPException(400, "Invalid transaction")
 
     if decision != "approve":
-        # Denied
-        uri = tx["redirect_uri"]
-        state = tx.get("state")
-        sep = "&" if "?" in uri else "?"
+        uri = tx["redirect_uri"]; state = tx.get("state"); sep = "&" if "?" in uri else "?"
         return RedirectResponse(f"{uri}{sep}error=access_denied" + (f"&state={state}" if state else ""), status_code=302)
 
-    # Issue code
     db = SessionLocal()
     client = _ensure_client_and_redirect(db, tx["client_id"], tx["redirect_uri"])
-
     code = secrets.token_urlsafe(32)
     db.add(OAuthAuthCode(
-        code=code,
-        user_id=user_id,
-        client_id=client.client_id,
-        redirect_uri=tx["redirect_uri"],
-        scope=tx["scope"],
-        expires_at=datetime.utcnow() + timedelta(minutes=10),
-        code_challenge=tx["code_challenge"],
-        code_challenge_method=tx["code_challenge_method"],
+        code=code, user_id=user_id, client_id=client.client_id, redirect_uri=tx["redirect_uri"],
+        scope=tx["scope"], expires_at=datetime.utcnow() + timedelta(minutes=10),
+        code_challenge=tx["code_challenge"], code_challenge_method=tx["code_challenge_method"],
     ))
     db.commit()
 
-    uri = tx["redirect_uri"]
-    state = tx.get("state")
-    sep = "&" if "?" in uri else "?"
+    uri = tx["redirect_uri"]; state = tx.get("state"); sep = "&" if "?" in uri else "?"
     redirect = f"{uri}{sep}code={code}" + (f"&state={state}" if state else "")
-    # clear tx
     request.session.pop("tx", None)
     return RedirectResponse(redirect, status_code=302)
 
-# --------------- OAuth: Token ---------------
 @app.post("/oauth/token")
 def oauth_token(
     request: Request,
@@ -397,7 +328,6 @@ def oauth_token(
         client = db.query(OAuthClient).filter_by(client_id=client_id).first()
         if not client:
             raise HTTPException(400, "Invalid client_id")
-        # If client_secret is set for client, require it here
         if client.client_secret and client_secret != client.client_secret:
             raise HTTPException(401, "Invalid client_secret")
 
@@ -409,7 +339,6 @@ def oauth_token(
         if ac.redirect_uri != redirect_uri:
             raise HTTPException(400, "redirect_uri mismatch")
 
-        # PKCE verification S256
         cv = code_verifier.encode("ascii")
         digest = hashlib.sha256(cv).digest()
         calc_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
@@ -417,29 +346,15 @@ def oauth_token(
             raise HTTPException(400, "Invalid code_verifier")
 
         user = db.get(User, ac.user_id)
-
         access_token, access_exp = create_access_token(user, client_id=client.client_id, scope=ac.scope)
         refresh_tok, refresh_exp = create_refresh_token(user, client_id=client.client_id, scope=ac.scope)
-
-        db.add(OAuthToken(
-            access_token=access_token,
-            refresh_token=refresh_tok,
-            user_id=user.id,
-            client_id=client.client_id,
-            scope=ac.scope,
-            access_expires_at=access_exp,
-            refresh_expires_at=refresh_exp,
-        ))
-        # one-time code usage
-        db.delete(ac)
-        db.commit()
+        db.add(OAuthToken(access_token=access_token, refresh_token=refresh_tok, user_id=user.id, client_id=client.client_id,
+                          scope=ac.scope, access_expires_at=access_exp, refresh_expires_at=refresh_exp))
+        db.delete(ac); db.commit()
 
         return {
-            "access_token": access_token,
-            "token_type": "Bearer",
-            "expires_in": ACCESS_TOKEN_EXPIRES_IN,
-            "refresh_token": refresh_tok,
-            "scope": ac.scope,
+            "access_token": access_token, "token_type": "Bearer", "expires_in": ACCESS_TOKEN_EXPIRES_IN,
+            "refresh_token": refresh_tok, "scope": ac.scope
         }
 
     elif grant_type == "refresh_token":
@@ -455,101 +370,62 @@ def oauth_token(
             raise HTTPException(400, "Refresh token expired")
         user = db.get(User, tok.user_id)
         new_access, access_exp = create_access_token(user, client_id=client.client_id, scope=tok.scope)
-        tok.access_token = new_access
-        tok.access_expires_at = access_exp
-        db.commit()
-        return {
-            "access_token": new_access,
-            "token_type": "Bearer",
-            "expires_in": ACCESS_TOKEN_EXPIRES_IN,
-            "scope": tok.scope,
-        }
+        tok.access_token = new_access; tok.access_expires_at = access_exp; db.commit()
+        return {"access_token": new_access, "token_type": "Bearer", "expires_in": ACCESS_TOKEN_EXPIRES_IN, "scope": tok.scope}
 
     else:
         raise HTTPException(400, "Unsupported grant_type")
 
-# --------------- OAuth: UserInfo ---------------
 @app.get("/oauth/userinfo")
-def oauth_userinfo(authorization: Optional[str] = Header(None), db: Session = Depends(get_db)):
-    user = verify_bearer(db, authorization)
-    return {
-        "sub": str(user.id),
-        "email": user.email,
-        "name": user.name,
-        "phone": user.phone,
-        "client_code": user.client_code,
-    }
+def oauth_userinfo(user: User = Depends(get_current_user)):
+    return {"sub": str(user.id), "email": user.email, "name": user.name, "phone": user.phone, "client_code": user.client_code}
 
-# --------------- Admin: add redirect ---------------
 @app.post("/admin/add_redirect")
-def admin_add_redirect(payload: Dict[str, str], x_admin_token: Optional[str] = Header(None), db: Session = Depends(get_db)):
+def admin_add_redirect(payload: AdminAddRedirectRequest, x_admin_token: Optional[str] = Header(None), db: Session = Depends(get_db)):
     if x_admin_token != ADMIN_TOKEN:
         raise HTTPException(403, "Admin token required")
-    client_id = payload.get("client_id")
-    redirect_uri = payload.get("redirect_uri")
-    if not client_id or not redirect_uri:
-        raise HTTPException(400, "client_id and redirect_uri required")
-    client = db.query(OAuthClient).filter_by(client_id=client_id).first()
+    client = db.query(OAuthClient).filter_by(client_id=payload.client_id).first()
     if not client:
         raise HTTPException(404, "Client not found")
-    # store as prefix
-    client.allowed_redirect_prefix = redirect_uri if redirect_uri.endswith("/") else redirect_uri
+    client.allowed_redirect_prefix = payload.redirect_uri if payload.redirect_uri.endswith("/") else payload.redirect_uri
     db.commit()
     return {"ok": True, "allowed_redirect_prefix": client.allowed_redirect_prefix}
 
-# --------------- Protected API ---------------------
 @app.get("/api/me")
-def api_me(authorization: Optional[str] = Header(None), db: Session = Depends(get_db)):
-    user = verify_bearer(db, authorization)
-    return {
-        "email": user.email,
-        "name": user.name,
-        "phone": user.phone,
-        "client_code": user.client_code,
-    }
+def api_me(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return {"email": user.email, "name": user.name, "phone": user.phone, "client_code": user.client_code}
 
 @app.get("/api/trades")
-def api_trades(authorization: Optional[str] = Header(None), db: Session = Depends(get_db)):
-    user = verify_bearer(db, authorization)
+def api_trades(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     rows = db.query(Trade).filter_by(user_id=user.id).order_by(Trade.timestamp.desc()).all()
     return [{"symbol": r.symbol, "side": r.side, "qty": r.qty, "price": r.price, "timestamp": r.timestamp.isoformat()} for r in rows]
 
 @app.get("/api/pnl")
-def api_pnl(authorization: Optional[str] = Header(None), db: Session = Depends(get_db)):
-    user = verify_bearer(db, authorization)
+def api_pnl(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     rows = db.query(PnL).filter_by(user_id=user.id).order_by(PnL.date.desc()).all()
     return [{"date": r.date, "realized": r.realized, "unrealized": r.unrealized} for r in rows]
 
 @app.get("/api/ledger")
-def api_ledger(authorization: Optional[str] = Header(None), db: Session = Depends(get_db)):
-    user = verify_bearer(db, authorization)
+def api_ledger(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     rows = db.query(LedgerEntry).filter_by(user_id=user.id).order_by(LedgerEntry.timestamp.desc()).all()
     return [{"entry_type": r.entry_type, "amount": r.amount, "description": r.description, "timestamp": r.timestamp.isoformat()} for r in rows]
 
 @app.get("/api/holdings")
-def api_holdings(authorization: Optional[str] = Header(None), db: Session = Depends(get_db)):
-    user = verify_bearer(db, authorization)
+def api_holdings(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     rows = db.query(Holding).filter_by(user_id=user.id).all()
     return [{"symbol": r.symbol, "qty": r.qty, "avg_price": r.avg_price} for r in rows]
 
 @app.get("/api/funds")
-def api_funds(authorization: Optional[str] = Header(None), db: Session = Depends(get_db)):
-    user = verify_bearer(db, authorization)
+def api_funds(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     row = db.query(Fund).filter_by(user_id=user.id).first()
-    if not row:
-        return {"available": 0.0, "margin_used": 0.0}
-    return {"available": row.available, "margin_used": row.margin_used}
+    return {"available": (row.available if row else 0.0), "margin_used": (row.margin_used if row else 0.0)}
 
-# --------------- OpenAPI server url hint ---------------
-# Add a servers entry dynamically for better import in GPT Actions
 original_openapi = app.openapi
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
     schema = original_openapi()
-    schema["servers"] = [
-        {"url": "https://fin-gpt-fastapi.onrender.com"}
-    ]
+    schema["servers"] = [{"url": PUBLIC_BASE_URL}]
     app.openapi_schema = schema
     return app.openapi_schema
 app.openapi = custom_openapi

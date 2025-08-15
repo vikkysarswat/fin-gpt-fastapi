@@ -1,3 +1,4 @@
+
 services:
   - type: web
     name: fin-gpt-fastapi
@@ -7,12 +8,14 @@ services:
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: SECRET_KEY
-        value: 4Mu_gDal4kzQpeQs10zoTbKxVlRIS8eolgs9HwAhRPM
+        value: s9SOk5AlF7_D8xfTNaBeOPKKu3OYo4dkaQXfEHyKIeU
       - key: ADMIN_TOKEN
-        value: YCcp0krQqj8BeQSjrIk-9tDDFiQ9QT8z
+        value: z2hSQovrFXqCTd53hiuQdzE1f836DaP6
       - key: OAUTH_CLIENT_ID
         value: customgpt-demo
       - key: OAUTH_CLIENT_SECRET
-        value: WFJbloooUmoxbfJpJvG7NHwWISsnI2jV
+        value: 0IwoGJFxShdyu3DWsSY0a-TuaWovBBO0
       - key: ALLOW_REDIRECT_PREFIX
         value: https://chat.openai.com/
+      - key: PUBLIC_BASE_URL
+        value: https://fin-gpt-fastapi.onrender.com

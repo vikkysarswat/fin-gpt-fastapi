@@ -149,6 +149,11 @@ class Fund(Base):
     margin_used = Column(Float, default=0.0)
     user = relationship("User", back_populates="funds")
 
+# add once, anywhere below your models
+class MakePublicClientRequest(BaseModel):
+    admin_token: str
+    client_id: str
+
 # ------------------ DB utils ----------------
 def get_db():
     db = SessionLocal()
@@ -332,6 +337,17 @@ def oauth_authorize_post(request: Request, decision: str = Form(...), transactio
     redirect = f"{uri}{sep}code={code}" + (f"&state={state}" if state else "")
     request.session.pop("tx", None)
     return RedirectResponse(redirect, status_code=302)
+
+@app.post("/internal/admin/make_public", include_in_schema=False)
+def make_public_client(payload: MakePublicClientRequest, db: Session = Depends(get_db)):
+    if payload.admin_token != ADMIN_TOKEN:
+        raise HTTPException(403, "Admin token required")
+    client = db.query(OAuthClient).filter_by(client_id=payload.client_id).first()
+    if not client:
+        raise HTTPException(404, "Client not found")
+    client.client_secret = None
+    db.commit()
+    return {"ok": True}
 
 # ------------------ OAuth: token ------------
 @app.post("/oauth/token")

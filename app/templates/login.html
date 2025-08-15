@@ -1,15 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Sign in · Fin-GPT</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root { color-scheme: light dark; }
+    html,body{height:100%} body{font-family:Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;}
+  </style>
+</head>
+<body class="min-h-full bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+  <div class="min-h-full flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
+    <div class="w-full max-w-md space-y-8">
+      <div class="text-center">
+        <div class="mx-auto w-12 h-12 rounded-2xl bg-indigo-600 flex items-center justify-center shadow-lg">
+          <span class="text-white font-semibold">FG</span>
+        </div>
+        <h1 class="mt-6 text-2xl font-semibold">Sign in to Fin-GPT</h1>
+        <p class="mt-2 text-sm text-slate-500">Use your account email and password to continue.</p>
+      </div>
 
-<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Sign in</title>
-<style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;padding:2rem;max-width:480px;margin:auto}form{display:grid;gap:.75rem}input,button{padding:.6rem .8rem;font-size:1rem}.box{border:1px solid #ddd;border-radius:8px;padding:1rem}.error{color:#b00020}</style>
-</head><body>
-<h2>Sign in</h2>
-{% if error %}<p class="error">{{error}}</p>{% endif %}
-<div class="box">
-<form method="post">
-<label>Email<br><input type="email" name="email" required></label>
-<label>Password<br><input type="password" name="password" required></label>
-<input type="hidden" name="next" value="{{next}}">
-<button type="submit">Sign in</button>
-</form>
-</div>
-</body></html>
+      {% if error %}
+      <div class="rounded-lg border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm">
+        {{ error }}
+      </div>
+      {% endif %}
+
+      <form class="mt-6 space-y-5" method="post" action="/login" autocomplete="on">
+        <div>
+          <label for="email" class="block text-sm font-medium mb-1">Email</label>
+          <input id="email" name="email" type="email" required
+                 class="block w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white/90 dark:bg-slate-800 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                 placeholder="you@example.com" />
+        </div>
+
+        <div>
+          <label for="password" class="block text-sm font-medium mb-1">Password</label>
+          <div class="relative">
+            <input id="password" name="password" type="password" required
+                   class="block w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white/90 dark:bg-slate-800 px-3 py-2 pr-10 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                   placeholder="••••••••" />
+            <button type="button" id="togglePwd"
+                    class="absolute inset-y-0 right-0 px-3 text-sm text-slate-500 hover:text-slate-700">Show</button>
+          </div>
+        </div>
+
+        <!-- The OAuth authorize flow will pass ?next=<redirect> -->
+        <input id="next" type="hidden" name="next" value="{{ next }}"/>
+
+        <div class="flex items-center justify-between">
+          <label class="inline-flex items-center gap-2 text-sm text-slate-600">
+            <input type="checkbox" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+            Remember this device
+          </label>
+          <a class="text-sm text-indigo-600 hover:text-indigo-700" href="#" onclick="alert('Ask your broker admin to reset your password.');return false;">Forgot password?</a>
+        </div>
+
+        <button type="submit"
+                class="w-full inline-flex justify-center items-center gap-2 rounded-xl bg-indigo-600 text-white px-4 py-2.5 font-medium shadow hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          Sign in
+        </button>
+      </form>
+
+      <div class="text-xs text-slate-500 mt-6 leading-relaxed">
+        <p><strong>Demo accounts</strong>: arun@example.com / test1234, riya@example.com / test1234, vikky@example.com / test1234</p>
+      </div>
+
+      <footer class="pt-6 text-center text-xs text-slate-400">
+        © <span id="year"></span> Fin-GPT · Secure OAuth Sign-in
+      </footer>
+    </div>
+  </div>
+
+  <script>
+    // Fill current year
+    document.getElementById('year').textContent = new Date().getFullYear();
+
+    // Toggle password visibility
+    const toggle = document.getElementById('togglePwd');
+    const pwd = document.getElementById('password');
+    toggle.addEventListener('click', () => {
+      const isPwd = pwd.type === 'password';
+      pwd.type = isPwd ? 'text' : 'password';
+      toggle.textContent = isPwd ? 'Hide' : 'Show';
+    });
+
+    // If a ?next= param is present, prefer it over templated {{ next }}
+    const url = new URL(window.location.href);
+    const nextParam = url.searchParams.get('next');
+    if (nextParam) document.getElementById('next').value = nextParam;
+  </script>
+</body>
+</html>

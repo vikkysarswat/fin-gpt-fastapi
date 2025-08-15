@@ -547,8 +547,9 @@ def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
     schema = original_openapi()
-    # Render will set its own hostname; this is only advisory for GPT importers.
-    schema["servers"] = [{"url": "/"}]
+    schema["servers"] = [
+        {"url": "https://fin-gpt-fastapi.onrender.com"}
+    ]
     app.openapi_schema = schema
     return app.openapi_schema
 app.openapi = custom_openapi

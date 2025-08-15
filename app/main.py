@@ -293,8 +293,18 @@ def oauth_authorize_get(
 ):
     if response_type != "code":
         raise HTTPException(400, "response_type must be 'code'")
+
+    # If PKCE params are missing, show a friendly page instead of a 400 JSON error.
     if not code_challenge or code_challenge_method != "S256":
-        raise HTTPException(400, "PKCE S256 required")
+        return templates.TemplateResponse(
+            "pkce_required.html",
+            {
+                "request": request,
+                "msg": "Please return to ChatGPT and click the black "
+                       "'Sign in with fin-gpt-fastapi.onrender.com' button. "
+                       "That button includes the required PKCE parameters automatically."
+            },
+        )
 
     db = SessionLocal()
     _ = _ensure_client_and_redirect(db, client_id, redirect_uri)
@@ -306,11 +316,19 @@ def oauth_authorize_get(
 
     txid = secrets.token_urlsafe(16)
     request.session["tx"] = {
-        "txid": txid, "client_id": client_id, "redirect_uri": redirect_uri,
-        "scope": scope, "state": state,
-        "code_challenge": code_challenge, "code_challenge_method": code_challenge_method,
+        "txid": txid,
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "scope": scope,
+        "state": state,
+        "code_challenge": code_challenge,
+        "code_challenge_method": code_challenge_method,
     }
-    return templates.TemplateResponse("consent.html", {"request": request, "txid": txid, "client_id": client_id, "client_name": "CustomGPT Client", "scope": scope})
+    return templates.TemplateResponse(
+        "consent.html",
+        {"request": request, "txid": txid, "client_id": client_id, "client_name": "CustomGPT Client", "scope": scope},
+    )
+
 
 @app.post("/oauth/authorize", response_class=HTMLResponse)
 def oauth_authorize_post(request: Request, decision: str = Form(...), transaction_id: str = Form(...)):

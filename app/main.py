@@ -348,13 +348,19 @@ def oauth_token(
     db = SessionLocal()
 
     if grant_type == "authorization_code":
-        if not (code and redirect_uri and code_verifier and client_id):
+        if not (code and redirect_uri and client_id and code_verifier):
             raise HTTPException(400, "Missing parameters for authorization_code")
+
         client = db.query(OAuthClient).filter_by(client_id=client_id).first()
         if not client:
             raise HTTPException(400, "Invalid client_id")
-        if client.client_secret and client_secret != client.client_secret:
-            raise HTTPException(401, "Invalid client_secret")
+
+        # PKCE/public clients (Custom GPT) should NOT be required to send a client_secret.
+        # Only require client_secret if this is a non-PKCE flow (no code_verifier).
+        if not code_verifier:
+            # Non-PKCE: enforce secret if configured
+            if client.client_secret and client_secret != client.client_secret:
+                raise HTTPException(401, "Invalid client_secret")
 
         ac = db.query(OAuthAuthCode).filter_by(code=code, client_id=client_id).first()
         if not ac:
@@ -364,7 +370,7 @@ def oauth_token(
         if ac.redirect_uri != redirect_uri:
             raise HTTPException(400, "redirect_uri mismatch")
 
-        # PKCE S256 verify
+        # Verify PKCE (S256)
         digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
         calc_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
         if calc_challenge != ac.code_challenge:
@@ -375,34 +381,57 @@ def oauth_token(
         refresh_tok, refresh_exp = create_refresh_token(user, client_id=client.client_id, scope=ac.scope)
 
         db.add(OAuthToken(
-            access_token=access_token, refresh_token=refresh_tok, user_id=user.id, client_id=client.client_id,
-            scope=ac.scope, access_expires_at=access_exp, refresh_expires_at=refresh_exp
+            access_token=access_token,
+            refresh_token=refresh_tok,
+            user_id=user.id,
+            client_id=client.client_id,
+            scope=ac.scope,
+            access_expires_at=access_exp,
+            refresh_expires_at=refresh_exp
         ))
-        db.delete(ac); db.commit()
+        db.delete(ac)
+        db.commit()
 
         return {
-            "access_token": access_token, "token_type": "Bearer", "expires_in": ACCESS_TOKEN_EXPIRES_IN,
-            "refresh_token": refresh_tok, "scope": ac.scope
+            "access_token": access_token,
+            "token_type": "Bearer",
+            "expires_in": ACCESS_TOKEN_EXPIRES_IN,
+            "refresh_token": refresh_tok,
+            "scope": ac.scope
         }
 
     elif grant_type == "refresh_token":
         if not refresh_token or not client_id:
             raise HTTPException(400, "Missing parameters for refresh_token")
+
         client = db.query(OAuthClient).filter_by(client_id=client_id).first()
         if not client:
             raise HTTPException(400, "Invalid client_id")
-        tok = db.query(OAuthToken).filter_by(refresh_token=refresh_token, client_id=client_id, revoked=False).first()
+
+        tok = db.query(OAuthToken).filter_by(
+            refresh_token=refresh_token, client_id=client_id, revoked=False
+        ).first()
         if not tok:
             raise HTTPException(400, "Invalid refresh_token")
         if tok.refresh_expires_at and tok.refresh_expires_at < datetime.utcnow():
             raise HTTPException(400, "Refresh token expired")
+
         user = db.get(User, tok.user_id)
         new_access, access_exp = create_access_token(user, client_id=client.client_id, scope=tok.scope)
-        tok.access_token = new_access; tok.access_expires_at = access_exp; db.commit()
-        return {"access_token": new_access, "token_type": "Bearer", "expires_in": ACCESS_TOKEN_EXPIRES_IN, "scope": tok.scope}
+        tok.access_token = new_access
+        tok.access_expires_at = access_exp
+        db.commit()
+
+        return {
+            "access_token": new_access,
+            "token_type": "Bearer",
+            "expires_in": ACCESS_TOKEN_EXPIRES_IN,
+            "scope": tok.scope
+        }
 
     else:
         raise HTTPException(400, "Unsupported grant_type")
+
 
 # ------------------ OAuth: userinfo ---------
 @app.get("/oauth/userinfo")

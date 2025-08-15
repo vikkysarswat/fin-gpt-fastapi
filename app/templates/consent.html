@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Authorize app</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; padding: 2rem; max-width: 720px; margin: auto; }
+      .app { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
+      .scopes { color: #333; }
+      button { padding: 0.6rem 0.8rem; font-size: 1rem; }
+    </style>
+  </head>
+  <body>
+    <h2>Authorize application</h2>
+    <div class="app">
+      <p><strong>App:</strong> {{client_name}} ({{client_id}})</p>
+      <p><strong>Requested scopes:</strong> <span class="scopes">{{scope}}</span></p>
+    </div>
+    <form method="post">
+      <input type="hidden" name="transaction_id" value="{{txid}}">
+      <button name="decision" value="approve" type="submit">Allow</button>
+      <button name="decision" value="deny" type="submit">Deny</button>
+    </form>
+  </body>
+</html>
